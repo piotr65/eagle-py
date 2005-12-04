@@ -42,12 +42,25 @@ __all__ = [
     ]
 
 import os
+import sys
 import gc
 import pygtk
 pygtk.require( "2.0" )
 import gtk
 import pango
 import cPickle as pickle
+
+required_gtk = ( 2, 4, 0 )
+m = gtk.check_version( *required_gtk )
+if m:
+    raise SystemExit(
+        ( "Error checking GTK version: %s. "
+          "This system requires pygtk >= %s, you have %s installed." )
+        % ( m,
+            ".".join( [ str( v ) for v in required_gtk ] ),
+            ".".join( [ str( v ) for v in gtk.pygtk_version ] )
+            ) )
+
 
 _apps = {}
 
@@ -148,7 +161,7 @@ class _Table( gtk.Table ):
         self.children = _obj_tuple( children )
 
         gtk.Table.__init__( self )
-          
+
         self.set_name( id )
         self.set_homogeneous( False )
         self.__setup_gui__()
@@ -180,7 +193,7 @@ class _Table( gtk.Table ):
                     row1 = idx + 1
                     col0 = 0
                     col1 = 2
-                
+
                 self.attach( w[ 0 ], col0, col1, row0, row1,
                              xoptions=xrm,
                              yoptions=yrm,
@@ -562,6 +575,7 @@ class AboutDialog( _EGWidget ):
         self._text = gtk.TextView()
         self._sw.add( self._text )
         self._text.set_editable( False )
+        self._text.set_cursor_visible( False )
         self._text.set_wrap_mode( gtk.WRAP_WORD )
 
         self.__setup_text__()
@@ -663,6 +677,7 @@ class HelpDialog( _EGWidget ):
         self._text = gtk.TextView()
         self._sw.add( self._text )
         self._text.set_editable( False )
+        self._text.set_cursor_visible( False )
         self._text.set_wrap_mode( gtk.WRAP_WORD )
 
         self.__setup_text__()
@@ -857,6 +872,193 @@ class PreferencesDialog( _EGWidget, AutoGenId ):
     # run()
 # PreferencesDialog
 
+
+class DebugDialog( _EGObject ):
+    # Most of DebugDialog code came from Gazpacho code! Thanks!
+    border = 12
+    spacing = 6
+
+    def __init__( self ):
+        self.__setup_gui__()
+    # __init__()
+
+
+    def __setup_gui__( self ):
+        b = ( gtk.STOCK_QUIT, gtk.RESPONSE_CLOSE )
+        self._diag = gtk.Dialog( "Application Crashed!",
+                                 parent=None,
+                                 flags=gtk.DIALOG_MODAL,
+                                 buttons=b )
+        self._diag.set_border_width( self.border )
+        self._diag.set_default_size( 600, 400 )
+
+        self._diag.vbox.set_spacing( self.spacing )
+
+        self._hbox1 = gtk.HBox()
+
+        self._label1 = gtk.Label( "<b>Exception type:</b>" )
+        self._label1.set_use_markup( True )
+        self._hbox1.pack_start( self._label1, False, False, self.spacing )
+        self._label1.show()
+
+        self._exctype = gtk.Label()
+        self._hbox1.pack_start( self._exctype, False, True )
+        self._exctype.show()
+
+        self._diag.vbox.pack_start( self._hbox1, False, False )
+        self._hbox1.show()
+
+        self._hbox2 = gtk.HBox()
+
+        self._label2 = gtk.Label( "<b>This info was saved to:</b>" )
+        self._label2.set_use_markup( True )
+        self._hbox2.pack_start( self._label2, False, False, self.spacing )
+        self._label2.show()
+
+        self._save_name = gtk.Label()
+        self._hbox2.pack_start( self._save_name, False, True )
+        self._save_name.show()
+
+        self._diag.vbox.pack_start( self._hbox2, False, False )
+        self._hbox2.show()
+
+        self._sw = gtk.ScrolledWindow()
+        self._sw.set_policy( gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC )
+        self._sw.set_shadow_type( gtk.SHADOW_IN )
+        self._text = gtk.TextView()
+        self._text.set_editable( False )
+        self._text.set_cursor_visible( False )
+        self._text.set_wrap_mode( gtk.WRAP_WORD )
+        self._sw.add( self._text )
+        self._text.show()
+        self._diag.vbox.pack_start( self._sw, expand=True, fill=True )
+        self._sw.show()
+        self.__setup_text__()
+    # __setup_gui__()
+
+
+    def __setup_text__( self ):
+        self._buf = self._text.get_buffer()
+        self._buf.create_tag( "label", weight=pango.WEIGHT_BOLD )
+        self._buf.create_tag( "code", foreground="gray25",
+                              family="monospace"  )
+        self._buf.create_tag( "exc", foreground="#880000",
+                              weight=pango.WEIGHT_BOLD )
+    # __setup_text__()
+
+
+    def show_exception( self, exctype, value, tb ):
+        import traceback
+        self._exctype.set_text( str( exctype ) )
+        self.print_tb( tb )
+
+        lines = traceback.format_exception_only( exctype, value )
+        msg = lines[ 0 ]
+        print repr( msg )
+        result = msg.split( ' ', 1 )
+        if len( result ) == 1:
+            msg = result[ 0 ]
+            arguments = ""
+        else:
+            msg, arguments = result
+
+        self._insert_text( "\n" )
+        self._insert_text( msg, "exc" )
+        self._insert_text( " " )
+        self._insert_text( arguments )
+    # show_exception()
+
+
+    def save_exception( self, exctype, value, tb ):
+        import traceback
+        import time
+        filename = "%s-%s-%s.tb" % ( sys.argv[ 0 ],
+                                  os.getuid(),
+                                  int( time.time() ) )
+        filename = os.path.join( os.path.sep, "tmp", filename )
+        f = open( filename, "wb" )
+        try:
+            os.chmod( filename, 0600 )
+        except:
+            pass
+
+        for e in traceback.format_exception( exctype, value, tb ):
+            f.write( e )
+        f.close()
+        self._save_name.set_text( filename )
+    # save_exception()
+
+
+    def print_tb( self, tb, limit=None ):
+        import linecache
+
+        if limit is None:
+            if hasattr( sys, "tracebacklimit" ):
+                limit = sys.tracebacklimit
+        n = 0
+        while tb is not None and ( limit is None or n < limit ):
+            f = tb.tb_frame
+            lineno = tb.tb_lineno
+            co = f.f_code
+            filename = co.co_filename
+            name = co.co_name
+            self._print_file( filename, lineno, name )
+            line = linecache.getline( filename, lineno )
+            if line:
+                self._insert_text( "    " + line.strip() + "\n\n", "code" )
+            tb = tb.tb_next
+            n = n+1
+    # print_tb()
+
+
+    def _insert_text( self, text, *tags ):
+        end_iter = self._buf.get_end_iter()
+        self._buf.insert_with_tags_by_name( end_iter, text, *tags )
+    # _insert_text()
+
+
+    def _print_file( self, filename, lineno, name ):
+        if filename.startswith( os.getcwd() ):
+            filename = filename.replace( self._pwd, '' )[ 1 : ]
+
+        self._insert_text( "File: ", "label" )
+        self._insert_text( filename )
+        self._insert_text( "\n" )
+        self._insert_text( "Line: ", "label" )
+        self._insert_text( str( lineno ) )
+        self._insert_text( "\n" )
+        self._insert_text( "Function: ", "label" )
+        self._insert_text( name )
+        self._insert_text( "\n" )
+    # _print_file()
+
+    def _start_debugger( self ):
+        import pdb
+        pdb.pm()
+    # _start_debugger()
+
+
+
+    def run( self, error=None ):
+        r = self._diag.run()
+        if r == gtk.RESPONSE_CLOSE:
+            raise SystemExit( error )
+    # run()
+
+
+    def except_hook( exctype, value, tb ):
+        if exctype is not KeyboardInterrupt:
+            d = DebugDialog()
+            d.save_exception( exctype, value, tb )
+            d.show_exception( exctype, value, tb )
+            d.run()
+            d.destroy()
+
+        raise SystemExit
+    # except_hook()
+    except_hook = staticmethod( except_hook )
+# DebugDialog
+sys.excepthook = DebugDialog.except_hook
 
 
 class _EGWidLabelEntry( _EGWidget ):
@@ -2299,7 +2501,10 @@ class Label( _EGWidget, AutoGenId ):
 
 
 def run():
-    gtk.main()
+    try:
+        gtk.main()
+    except KeyboardInterrupt:
+        raise SystemExit( "User quit using Control-C" )
 # run()
 
 def quit():
